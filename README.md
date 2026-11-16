@@ -50,7 +50,8 @@ The application will retrieve relevant information and provide source references
 | Initial generation model | Qwen3 8B |
 | Document extraction | PyMuPDF, python-docx |
 | Spreadsheet processing | openpyxl |
-| Embedding model | Sentence Transformers |
+| Embedding model | Ollama `nomic-embed-text` |
+| Cross-encoder reranking | Sentence Transformers |
 | Vector database | ChromaDB |
 | Keyword retrieval | BM25 |
 | Hybrid retrieval | Reciprocal Rank Fusion |
@@ -168,74 +169,124 @@ hybrid-rag-cybersecurity/
 
 ### Prerequisites
 
-- macOS, Linux or Windows
-- Python 3.13
-- uv
+- macOS, Linux, or Windows
 - Git
-- Ollama
+- Python 3.13 (can be installed with `uv`)
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) for Python and dependency management
+- [Ollama](https://ollama.com/download) for local embeddings and text generation
+- Enough disk space and memory for the local models; `qwen3:8b` is an 8-billion-parameter model
 
 ### 1. Clone the repository
+
+Replace the URL with the HTTPS or SSH URL shown on the GitHub repository page:
 
 ```bash
 git clone YOUR_GITHUB_REPOSITORY_URL
 cd hybrid-rag-cybersecurity
 ```
 
-### 2. Synchronise dependencies
+### 2. Install Python and project dependencies
+
+If Python 3.13 is not already installed, ask `uv` to install it, then sync the locked project dependencies (including the development tools):
 
 ```bash
-uv sync
+uv python install 3.13
+uv sync --locked
 ```
 
-### 3. Activate the virtual environment
+The `uv run` commands below use the project environment automatically, so activating `.venv` manually is optional.
+
+### 3. Install Ollama
+
+Install Ollama from [ollama.com/download](https://ollama.com/download). You will start the local Ollama service and download the required models in the next section. The first use of the Sentence Transformers cross-encoder downloads that model separately. An internet connection is needed for initial package and model downloads; after those are available locally, document indexing and queries use local services.
+
+## Prepare data, build Chroma, and run the application
+
+A fresh clone does not include the source documents or local Chroma database: both are excluded from Git. Add at least one supported document under `data/raw/`, build the index, and then launch Streamlit. The builder performs ingestion, cleaning, chunking, embedding, and Chroma storage in that order. Streamlit does not create or refresh the vector database. At query time, the app also reloads the documents from `data/raw/` to create its in-memory BM25 index, so keep those source files on the machine after building Chroma.
+
+### 1. Set up the local folders and add documents
+
+From the repository root, create the supported input folders on macOS or Linux:
 
 ```bash
-source .venv/bin/activate
+mkdir -p data/raw/pdf data/raw/docx data/raw/txt data/raw/csv data/raw/xlsx
 ```
 
-### 4. Install Ollama
+On Windows PowerShell, use:
 
-Download Ollama from:
+```powershell
+$folders = @("pdf", "docx", "txt", "csv", "xlsx")
+$folders | ForEach-Object { New-Item -ItemType Directory -Force "data/raw/$_" | Out-Null }
+```
 
-https://ollama.com/download
+Copy your own documents into the matching folders. Add at least one supported file. Supported inputs are PDF, DOCX, TXT, CSV, and XLSX. The ingestion code extracts PDF pages, document paragraphs and tables, text files, CSV rows, and spreadsheet rows while keeping source and location metadata where available. For example:
 
-### 5. Download the initial LLM
+```text
+data/raw/
+├── pdf/   # e.g. NIST CSF PDF
+├── docx/  # e.g. a synthetic incident-response policy
+├── txt/   # e.g. a small security procedure
+├── csv/   # e.g. CISA KEV export
+└── xlsx/  # e.g. a vulnerability register
+```
+
+Use documents you are allowed to process, and do not commit private or internal source files. The repository's ignore rules exclude `data/raw/`.
+
+For a small generated XLSX example, run the included generator from its expected working directory:
 
 ```bash
+cd scripts
+uv run python create_sample_xlsx.py
+cd ..
+```
+
+### 2. Start Ollama and download the models
+
+Install Ollama if needed, then make sure its local service is running. On macOS, you can open the Ollama app; alternatively, run this in a separate terminal and leave it running:
+
+```bash
+ollama serve
+```
+
+In the project terminal, download the embedding and generation models used by the project:
+
+```bash
+ollama pull nomic-embed-text
 ollama pull qwen3:8b
-```
-
-### 6. Verify Ollama
-
-```bash
 ollama list
 ```
 
-## Run the Streamlit application
+The cross-encoder used for reranking is downloaded by Sentence Transformers the first time it is needed.
 
-The app reads the existing `data/chroma_db` collection and source files under
-`data/raw` to prepare keyword search. It does not build or update the vector
-database. Build the collection separately with the following command only
-when you intend to ingest or refresh the indexed documents:
+### 3. Ingest, chunk, embed, and create the Chroma database
+
+Run the builder from the repository root:
 
 ```bash
 uv run python scripts/build_vector_store.py
 ```
 
-Start the app with:
+This script reads files from `data/raw/`, parses each supported format, cleans the extracted text, splits it into chunks (1,200 characters with 200-character overlap), creates embeddings using Ollama's `nomic-embed-text`, and stores the chunks and metadata in the persistent Chroma collection `cybersecurity_knowledge` under `data/chroma_db/`. Its output reports extracted records, cleaned records, generated chunks, and ingestion failures. Review those counts and fix any failed inputs before relying on the index.
+
+The database is local and ignored by Git. The builder adds or updates chunks by deterministic ID, but it does not remove old chunks when a source file is deleted or its contents change. For a clean rebuild after changing the corpus, first back up any local Chroma data you want to keep, then remove or move the ignored `data/chroma_db/` directory and run the builder again. Never delete a database you need without a backup.
+
+### 4. Launch the Streamlit app
+
+After a successful index build, start the app:
 
 ```bash
-uv sync
-ollama serve
-ollama pull nomic-embed-text
-ollama pull qwen3:8b
 uv run streamlit run app/streamlit_app.py
 ```
 
-The cross-encoder is downloaded by Sentence Transformers on first use. The
-app displays retrieved source names and page, sheet, or row locations when
-available. Its citation checks are structural warnings and do not prove that
-an answer is semantically supported.
+Open the local URL printed by Streamlit (usually `http://localhost:8501`), enter a question, and review both the answer and the retrieved source passages. Source references may include a filename, PDF page, worksheet, or row depending on the input format. The local app has no authentication or document-level authorization; keep it on a trusted machine.
+
+### Troubleshooting a first local run
+
+- **Ollama connection error:** confirm the Ollama app or `ollama serve` is running, then check `ollama list` for both required models.
+- **No supported source documents:** confirm at least one non-empty `.pdf`, `.docx`, `.txt`, `.csv`, or `.xlsx` file is inside a subfolder of `data/raw/`.
+- **Chroma database missing or empty:** run `uv run python scripts/build_vector_store.py` from the repository root and check that it reports generated chunks and zero unexpected ingestion failures.
+- **A scanned PDF produces no text:** this first-stage project does not include OCR; use a text-searchable PDF or convert the relevant content to a supported text document.
+- **First query is slow:** the cross-encoder and local models may need to load or download on their first use.
 
 ## Automated checks
 

@@ -1,0 +1,40 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environment
+.venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Testing and linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Local databases
+data/chroma_db/
+
+# Source documents may contain internal information. Keep them out of Git.
+data/raw/
+
+# Generated data
+data/processed/
+
+# OS files
+.DS_Store
+
+# Logs
+*.log

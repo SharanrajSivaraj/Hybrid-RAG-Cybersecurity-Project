@@ -330,6 +330,12 @@ Each extracted record contains:
 
 Synthetic internal cybersecurity documents will also be used for testing.
 
+
+### Output
+![alt text](<Screenshot 2026-11-16 at 9.10.09 am.png>) ![alt text](<Screenshot 2026-11-16 at 9.10.14 am.png>)
+
+
+
 ## Development Roadmap
 
 | Phase | Description | Status |
